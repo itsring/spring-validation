@@ -10,6 +10,9 @@ import org.springframework.util.StringUtils;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.validation.ObjectError;
+import org.springframework.validation.ValidationUtils;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.WebDataBinder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
@@ -24,7 +27,18 @@ import java.util.Map;
 public class ValidationItemControllerV2 {
 
     private final ItemRepository itemRepository;
+    private final ItemValidater itemValidater;
 
+/**
+ * @InitBinder
+ * 컨트롤러가 호출 될때마다 적용되는 사항.
+ * 해당 컨트롤러에서만 적용됨. 다른 컨트롤러는 적용 안됨.
+ * -> 검증기 적용.
+ */
+    @InitBinder
+    public void init(WebDataBinder dataBinder) {
+        dataBinder.addValidators(itemValidater);
+    }
     @GetMapping
     public String items(Model model) {
         List<Item> items = itemRepository.findAll();
@@ -238,7 +252,7 @@ public class ValidationItemControllerV2 {
         return "redirect:/validation/v2/items/{itemId}";
     }
 
-    @PostMapping("/add")
+//    @PostMapping("/add")
     public String addItemV4(
             @ModelAttribute Item item,
             RedirectAttributes redirectAttributes,
@@ -280,6 +294,120 @@ public class ValidationItemControllerV2 {
         return "redirect:/validation/v2/items/{itemId}";
     }
 
+//    @PostMapping("/add")
+    public String addItemV5(
+            @ModelAttribute Item item,
+            RedirectAttributes redirectAttributes,
+            BindingResult bindingResult, // 검증 오류 결과를 보관
+            Model model
+    ) {
+//      bindingResult 는 타겟을 이미 알고있음. => rejectValue , reject 사용 / reject : 거절
+        log.info("objectName={}", bindingResult.getObjectName());
+        log.info("target={}", bindingResult.getTarget());
+
+        //검증 로직
+        ValidationUtils.rejectIfEmptyOrWhitespace(bindingResult,"itemName","required");
+/*      위와 같은 뜻
+        if(!StringUtils.hasText(item.getItemName())){
+            bindingResult.rejectValue("itemName","required");
+        }
+*/
+
+
+        if(item.getPrice() == null || item.getPrice() < 1000 || item.getPrice() > 1000000){
+            bindingResult.rejectValue("price","range", new Object[]{1000, 1000000}, null);
+        }
+        if (item.getQuantity() == null || item.getQuantity() >= 9999) {
+            bindingResult.rejectValue("quantity","max", new Object[]{9999}, null);
+        }
+        if (item.getPrice() != null && item.getQuantity() != null) {
+            int resultPrice = item.getPrice()*item.getQuantity();
+            if (resultPrice < 10000) {
+                bindingResult.reject("totalPriceMin", new Object[]{10000, resultPrice}, null);
+            }
+        }
+
+        //검증 실패하면 다시 입력 폼으로
+        if(bindingResult.hasErrors()){
+            log.info("errors= {}", bindingResult);
+            return "validation/v2/addForm";
+        }
+
+
+        // 성공 로직
+        Item savedItem = itemRepository.save(item);
+        redirectAttributes.addAttribute("itemId", savedItem.getId());
+        redirectAttributes.addAttribute("status", true);
+        return "redirect:/validation/v2/items/{itemId}";
+
+        // rejectValue() 호출 ->
+        // MessageCodesResolver를 사용해서 검증 오류 메시지 코드 생성 ->
+        // new FieldError()를 생성하면서 메시지 코드들을 보관 ->
+        // th:errors에서 메시지 코드들로 메시지를 순서대로 메시지에서 찾고 노출
+
+    }
+
+//    @PostMapping("/add")
+    public String addItemV6(
+            @ModelAttribute Item item,
+            RedirectAttributes redirectAttributes,
+            BindingResult bindingResult, // 검증 오류 결과를 보관
+            Model model
+    ) {
+        //error가 있으면 itemValidater에서 bindingResult에 error를 담는다.
+        // 없으면 errors = null 이 될...껄?
+        itemValidater.validate(item, bindingResult);
+
+        //검증 실패하면 다시 입력 폼으로
+        if(bindingResult.hasErrors()){
+            log.info("errors= {}", bindingResult);
+            return "validation/v2/addForm";
+        }
+
+
+        // 성공 로직
+        Item savedItem = itemRepository.save(item);
+        redirectAttributes.addAttribute("itemId", savedItem.getId());
+        redirectAttributes.addAttribute("status", true);
+        return "redirect:/validation/v2/items/{itemId}";
+
+    }
+
+    /**
+     * @Validated : Item에 대해서 자동으로 검증기가 실행됨. -> bindingResult에 담겨진다는 뜻 / 검증기를 실행하라 는 어노테이션
+     *  validator를 직접 호출하는 부분이 사라지고 검증대상 앞에 @Validated 가 붙음.
+     *  검증기가 여러개일경우 supports(Class<?> clazz) 가 동작하게 되서 class를 확인해서 true인 것만 동작.
+     */
+    @PostMapping("/add")
+    public String addItemV7(
+            @Validated @ModelAttribute Item item,
+            RedirectAttributes redirectAttributes,
+            BindingResult bindingResult, // 검증 오류 결과를 보관
+            Model model
+    ) {
+        //error가 있으면 itemValidater에서 bindingResult에 error를 담는다.
+        // 없으면 errors = null 이 될...껄?
+        itemValidater.validate(item, bindingResult);
+
+        //검증 실패하면 다시 입력 폼으로
+        if(bindingResult.hasErrors()){
+            log.info("errors= {}", bindingResult);
+            return "validation/v2/addForm";
+        }
+
+
+        // 성공 로직
+        Item savedItem = itemRepository.save(item);
+        redirectAttributes.addAttribute("itemId", savedItem.getId());
+        redirectAttributes.addAttribute("status", true);
+        return "redirect:/validation/v2/items/{itemId}";
+
+        // rejectValue() 호출 ->
+        // MessageCodesResolver를 사용해서 검증 오류 메시지 코드 생성 ->
+        // new FieldError()를 생성하면서 메시지 코드들을 보관 ->
+        // th:errors에서 메시지 코드들로 메시지를 순서대로 메시지에서 찾고 노출
+
+    }
 
     @GetMapping("/{itemId}/edit")
     public String editForm(@PathVariable Long itemId, Model model) {
